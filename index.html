@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cálculo de Potência — Rede Desbalanceada</title>
+<style>
+  :root{
+    --bg:#0d1421;
+    --panel:#131d2e;
+    --panel-2:#0f1828;
+    --line:#1f2d44;
+    --text:#dce6f5;
+    --muted:#7e90ab;
+    --accent:#ffb13d;
+    --accent-dim:#8a5f1e;
+    --ok:#3ad08a;
+    --warn:#f5c451;
+    --bad:#ff5d6c;
+    --branch:#5fa8ff;
+    --mono:'Consolas','SF Mono','Cascadia Mono',ui-monospace,monospace;
+    --sans:'Segoe UI',system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh}
+  body::before{content:'';position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(900px 300px at 70% -10%,rgba(255,177,61,.07),transparent 60%)}
+
+  header{display:flex;align-items:center;gap:14px;padding:18px 26px;border-bottom:1px solid var(--line)}
+  .pulse{width:12px;height:12px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 14px var(--accent);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+  header h1{font-size:17px;font-weight:600;letter-spacing:.3px}
+  header .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  header .actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+
+  main{padding:20px 22px 60px}
+  .grid{display:grid;grid-template-columns:280px 1fr;gap:18px;align-items:start}
+  .grid>div{min-width:0}
+  @media(max-width:1280px){.grid{grid-template-columns:260px 1fr}}
+  @media(max-width:1020px){.grid{grid-template-columns:1fr}}
+  @media(max-width:760px){
+    main{padding:12px 12px 40px}
+    header{padding:12px 14px;flex-wrap:wrap}
+    header h1{font-size:15px}
+    header .actions{margin-left:0;width:100%;justify-content:flex-start}
+    header .actions button{flex:1 1 auto}
+    .global-summary{gap:14px;padding:10px 12px}
+    .global-summary .item .v{font-size:14px}
+    .branch-head{gap:8px}
+    .branch-head input.bname{width:140px}
+    .branch-head .origem select{min-width:150px}
+    .row2{grid-template-columns:1fr}
+    input[type=number],input[type=text],select{font-size:16px} /* evita zoom automático no celular */
+  }
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .card h2{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);
+    padding:12px 16px;border-bottom:1px solid var(--line)}
+  .card .body{padding:14px 16px}
+
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  label:first-child{margin-top:0}
+  input[type=number],input[type=text],select{
+    width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    border-radius:6px;padding:7px 9px;font-family:var(--mono);font-size:13px}
+  input:focus,select:focus{outline:2px solid var(--accent-dim);outline-offset:0;border-color:var(--accent-dim)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+  button{background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:6px;
+    padding:7px 13px;font-size:13px;cursor:pointer;font-family:var(--sans)}
+  button:hover{border-color:var(--accent-dim)}
+  button:focus-visible{outline:2px solid var(--accent)}
+  button.primary{background:var(--accent);color:#1a1206;font-weight:600;border-color:var(--accent)}
+  button.icon{padding:5px 9px;font-size:12px;line-height:1}
+  button.danger:hover{border-color:var(--bad);color:var(--bad)}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);
+    text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td input,td select{width:100%;min-width:64px}
+  td input.nome{min-width:104px;font-family:var(--sans)}
+  td input.dist{min-width:74px;text-align:right}
+  .num{font-family:var(--mono);text-align:right;font-size:13px}
+  .num.ok{color:var(--ok)} .num.warn{color:var(--warn)} .num.bad{color:var(--bad);font-weight:700}
+  .pill{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.6px;border-radius:4px;
+    padding:2px 7px;text-transform:uppercase}
+  .pill.ok{background:rgba(58,208,138,.12);color:var(--ok)}
+  .pill.warn{background:rgba(245,196,81,.12);color:var(--warn)}
+  .pill.bad{background:rgba(255,93,108,.14);color:var(--bad)}
+
+  .gauge{position:relative;width:140px;height:14px;border-radius:3px;background:
+    linear-gradient(90deg,
+      rgba(255,93,108,.16) 0%,
+      rgba(255,93,108,.16) var(--p-bad),
+      rgba(245,196,81,.18) var(--p-bad),
+      rgba(245,196,81,.18) var(--p-warn),
+      rgba(58,208,138,.18) var(--p-warn),
+      rgba(58,208,138,.18) 100%);
+    border:1px solid var(--line)}
+  .gauge .needle{position:absolute;top:-3px;bottom:-3px;width:3px;border-radius:2px;background:var(--accent);
+    box-shadow:0 0 8px var(--accent)}
+  .gauge .needle.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .gauge .needle.warn{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+  .gauge .needle.bad{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+
+  /* ramais */
+  .branch{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:18px}
+  .branch.is-ramal{border-left:3px solid var(--branch)}
+  .branch.is-trunk{border-left:3px solid var(--accent)}
+  .branch-head{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .branch-head .tag{font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;
+    border-radius:4px;padding:3px 8px}
+  .branch-head .tag.trunk{background:rgba(255,177,61,.12);color:var(--accent)}
+  .branch-head .tag.ramal{background:rgba(95,168,255,.12);color:var(--branch)}
+  .branch-head input.bname{width:200px;font-family:var(--sans);font-weight:600}
+  .branch-head .origem{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+  .branch-head .origem select{width:auto;min-width:190px}
+  .branch-head .feed{font-family:var(--mono);font-size:12px;color:var(--branch)}
+  .branch-head .spacer{flex:1}
+  .tablewrap{overflow-x:auto}
+  .empty{padding:26px;text-align:center;color:var(--muted);font-size:13px}
+  .branch-foot{display:flex;gap:22px;padding:10px 16px;border-top:1px solid var(--line);flex-wrap:wrap;align-items:center}
+  .branch-foot .item .k{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
+  .branch-foot .item .v{font-family:var(--mono);font-size:14px;margin-top:1px}
+  .err{color:var(--bad);font-size:12px}
+  .sug{display:flex;width:fit-content;align-items:center;gap:4px;margin-top:4px;font-size:11px;
+    font-family:var(--mono);color:var(--accent);background:rgba(255,177,61,.08);
+    border:1px solid rgba(255,177,61,.3);border-radius:4px;padding:2px 7px;cursor:pointer;white-space:nowrap}
+  .sug:hover{background:rgba(255,177,61,.18)}
+  .sug.insuf{color:var(--bad);border-color:rgba(255,93,108,.35);background:rgba(255,93,108,.08)}
+  .sug.match{color:var(--ok);border-color:rgba(58,208,138,.3);background:rgba(58,208,138,.07);cursor:default}
+
+  .topbar{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+  .hint{color:var(--muted);font-size:12px}
+
+  details.losses{border-top:1px solid var(--line)}
+  details.losses summary{padding:11px 16px;font-size:11px;text-transform:uppercase;letter-spacing:1.2px;
+    color:var(--muted);cursor:pointer;list-style:none}
+  details.losses summary::before{content:'▸ ';color:var(--accent)}
+  details.losses[open] summary::before{content:'▾ '}
+  .losses-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:0 16px 16px}
+  .loss-item{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:8px}
+  .loss-item .t{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:6px}
+  .loss-item .pair{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted)}
+  .loss-item input{width:62px;padding:3px 5px;font-size:12px}
+
+  .global-summary{display:flex;gap:24px;padding:13px 16px;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;flex-wrap:wrap;margin-bottom:16px}
+  .global-summary .item .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
+  .global-summary .item .v{font-family:var(--mono);font-size:17px;margin-top:2px}
+
+  /* quadro de topologia com pan/zoom */
+  #diagramViewport{position:relative;height:clamp(260px,46vh,520px);overflow:hidden;cursor:grab;
+    user-select:none;-webkit-user-select:none;touch-action:none;
+    background:linear-gradient(rgba(31,45,68,.25) 1px,transparent 1px),
+               linear-gradient(90deg,rgba(31,45,68,.25) 1px,transparent 1px);
+    background-size:28px 28px;border-top:1px solid var(--line)}
+  #diagramViewport.dragging{cursor:grabbing}
+  #diagramCanvas{position:absolute;top:0;left:0;transform-origin:0 0}
+  .zoomctl{position:absolute;right:12px;top:10px;display:flex;gap:6px;z-index:2}
+  .zoomctl button{padding:4px 10px;font-size:13px;font-family:var(--mono);background:var(--panel-2)}
+  .zoomhint{position:absolute;left:12px;bottom:8px;font-size:11px;color:var(--muted);z-index:2;pointer-events:none}
+
+  @media print{
+    body{background:#fff;color:#000}
+    header .actions,.topbar,details.losses,td .rowbtns,.branch-head button{display:none!important}
+    .card,.branch{border:1px solid #ccc}
+    .gauge{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="pulse" aria-hidden="true"></div>
+  <div>
+    <h1>Cálculo de Potência Óptica — Método Desbalanceado</h1>
+    <div class="sub">Orçamento de potência em cascata com ramais · valores em dBm</div>
+  </div>
+  <div class="actions">
+    <button id="btnImport">Importar projeto</button>
+    <button id="btnExportJson">Exportar projeto</button>
+    <button id="btnExportCsv">Exportar CSV</button>
+    <button class="primary" id="btnExportPdf">Exportar PDF</button>
+  </div>
+</header>
+
+<main>
+<div class="grid">
+
+  <!-- PARÂMETROS -->
+  <div>
+    <div class="card">
+      <h2>Parâmetros do enlace</h2>
+      <div class="body">
+        <label for="pNome">Nome do projeto</label>
+        <input type="text" id="pNome" value="Projeto sem nome">
+
+        <label for="pOlt">Potência de saída da OLT (dBm)</label>
+        <input type="number" id="pOlt" step="0.01" value="4">
+
+        <label for="pInicial">Perda inicial (dB) — splitter/conector na saída da OLT</label>
+        <input type="number" id="pInicial" step="0.01" value="0.3">
+
+        <label for="pKm">Atenuação da fibra (dB/km)</label>
+        <input type="number" id="pKm" step="0.01" value="0.25">
+
+        <label for="pTrecho">Perda extra por trecho (dB) — fusões/conectores</label>
+        <input type="number" id="pTrecho" step="0.01" value="0">
+
+        <div class="row2">
+          <div>
+            <label for="limWarn">Limite atenção (dBm)</label>
+            <input type="number" id="limWarn" step="0.5" value="-25">
+          </div>
+          <div>
+            <label for="limBad">Limite crítico (dBm)</label>
+            <input type="number" id="limBad" step="0.5" value="-28">
+          </div>
+        </div>
+        <p class="hint" style="margin-top:10px">
+          A distância de cada caixa é a do <b>trecho</b> (da caixa anterior até ela; na primeira, da origem até ela).
+          O Σ ao lado mostra o acumulado até a OLT.
+        </p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <details class="losses">
+        <summary>Tabela de perdas dos splitters (dB)</summary>
+        <div class="losses-grid" id="lossGrid"></div>
+      </details>
+    </div>
+  </div>
+
+  <!-- REDE -->
+  <div>
+    <div class="global-summary" id="globalSummary"></div>
+    <div class="card" style="margin-bottom:16px">
+      <details class="losses" open>
+        <summary>Topologia da rede</summary>
+        <div style="position:relative">
+          <div class="zoomctl">
+            <button onclick="zoomDiagram(1.2)" title="Aproximar">+</button>
+            <button onclick="zoomDiagram(1/1.2)" title="Afastar">−</button>
+            <button onclick="fitDiagram()" title="Ajustar à tela">Ajustar</button>
+            <button onclick="zoomReset()" title="Tamanho real">1:1</button>
+          </div>
+          <div id="diagramViewport">
+            <div id="diagramCanvas"></div>
+          </div>
+          <div class="zoomhint">Arraste para mover · role o mouse para dar zoom</div>
+        </div>
+      </details>
+    </div>
+    <div class="topbar">
+      <button class="primary" id="btnAddBranch">+ Novo ramal</button>
+      <span class="hint">Ou clique em ⑂ na linha de uma caixa para criar um ramal alimentado pela derivação dela.</span>
+    </div>
+    <div id="branches"></div>
+  </div>
+
+</div>
+</main>
+
+<input type="file" id="fileInput" accept="application/json" style="display:none">
+
+<script>
+'use strict';
+
+/* ===== Tabela de perdas (dB) — P1 = derivação, P2 = passagem ===== */
+const DEFAULT_LOSSES = [
+  ['1/99', 21.6, 0.3], ['2/98', 18.7, 0.4], ['5/95', 14.6, 0.5],
+  ['10/90', 11, 0.7], ['15/85', 9.6, 1], ['20/80', 7.9, 1.4],
+  ['25/75', 6.95, 1.7], ['30/70', 6, 1.9], ['35/65', 5.35, 2.3],
+  ['40/60', 4.7, 2.7], ['45/55', 4.15, 3.15], ['50/50', 3.7, 3.7],
+  ['1:2', 3.7, 3.7], ['1:4', 7.1, 7.1], ['1:8', 10.5, 10.5],
+  ['1:16', 13.7, 13.7], ['1:32', 17.1, 17.1], ['1:64', 20.5, 20.5],
+  ['-', 0, 0]
+];
+let losses = DEFAULT_LOSSES.map(l => ({tipo:l[0], p1:l[1], p2:l[2]}));
+
+/* ===== modelo: ramais e caixas =====
+   branch: {id, nome, origem:{tipo:'olt'} | {tipo:'box', boxId, porta:'derivacao'|'passagem'|'cliente'}, ctos:[]}
+   cto:    {id, nome, dist, sp1, sp2}  — dist medida a partir da origem do ramal
+*/
+let branches = [];
+let nextBoxId = 1, nextBranchId = 1;
+
+const GAUGE_MIN = -40, GAUGE_MAX = 0;
+const PORT_LABEL = {derivacao:'derivação', passagem:'passagem', cliente:'saída do atendimento'};
+/* porcentagem da perna conforme o splitter desbalanceado (ex.: 25/75 → derivação 25%, passagem 75%) */
+function pctOf(sp1, porta){
+  if(!sp1 || !sp1.includes('/')) return '';
+  const [a,b]=sp1.split('/');
+  return porta==='derivacao' ? a+'%' : porta==='passagem' ? b+'%' : '';
+}
+
+/* ===== helpers ===== */
+const $ = id => document.getElementById(id);
+const fmt = v => (v===null||v===undefined||isNaN(v)) ? '—' : v.toFixed(2);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+function lossOf(tipo){ return losses.find(l=>l.tipo===tipo) || {p1:0,p2:0}; }
+function params(){
+  return {
+    nome: $('pNome').value,
+    olt: parseFloat($('pOlt').value)||0,
+    inicial: parseFloat($('pInicial').value)||0,
+    km: parseFloat($('pKm').value)||0,
+    trecho: parseFloat($('pTrecho').value)||0,
+    limWarn: parseFloat($('limWarn').value),
+    limBad: parseFloat($('limBad').value)
+  };
+}
+function statusOf(v,p){
+  if(v===null||v===undefined||isNaN(v)) return null;
+  if(v >= p.limWarn) return 'ok';
+  if(v >= p.limBad) return 'warn';
+  return 'bad';
+}
+function findBox(boxId){
+  for(const b of branches){ const c=b.ctos.find(x=>x.id===boxId); if(c) return {branch:b, cto:c}; }
+  return null;
+}
+function isEnd(sp1){ return sp1.includes(':') || sp1==='-'; }
+
+/* ===== sugestão de splitter 1 =====
+   Escolhe o desbalanceado de MAIOR perda na derivação (P1) que ainda mantém
+   cliente >= limite de atenção. Assim retira-se o mínimo de potência na caixa
+   e preserva-se o máximo na passagem para as caixas seguintes. */
+function suggestSp1(chegada, sp2tipo, p){
+  if(chegada===null||chegada===undefined||isNaN(chegada)) return null;
+  const sp2loss = (sp2tipo==='-') ? 0 : lossOf(sp2tipo).p1;
+  const cands = losses.filter(l=>l.tipo.includes('/'));
+  const feasible = cands.filter(l => chegada - l.p1 - sp2loss >= p.limWarn);
+  if(feasible.length){
+    const best = feasible.reduce((a,b)=> b.p1>a.p1 ? b : a);
+    return {tipo:best.tipo, cliente: chegada - best.p1 - sp2loss, insuf:false};
+  }
+  // nem o 50/50 atende: sugere o de menor perda e sinaliza
+  const best = cands.reduce((a,b)=> b.p1<a.p1 ? b : a);
+  return {tipo:best.tipo, cliente: chegada - best.p1 - sp2loss, insuf:true};
+}
+
+/* ===== cálculo em árvore ===== */
+function computeAll(){
+  const p = params();
+  const boxRes = new Map();      // boxId -> {chegada, derivacao, passagem, cliente}
+  const state = new Map();       // branchId -> 'visiting'|'done'
+  const branchErr = new Map();   // branchId -> string
+
+  function computeBranch(b){
+    if(state.get(b.id)==='done') return;
+    if(state.get(b.id)==='visiting'){ branchErr.set(b.id,'Referência circular entre ramais'); state.set(b.id,'done'); return; }
+    state.set(b.id,'visiting');
+
+    let originPower = null, originCum = 0;
+    const isTrunk = b.origem.tipo==='olt';
+    if(isTrunk){
+      originPower = p.olt;
+    }else{
+      const found = findBox(b.origem.boxId);
+      if(!found){
+        branchErr.set(b.id,'Caixa de origem não existe mais — selecione outra origem');
+      }else{
+        computeBranch(found.branch);
+        const r = boxRes.get(b.origem.boxId);
+        if(r) originPower = r[b.origem.porta];
+        originCum = (r && r.cum!==null && r.cum!==undefined) ? r.cum : null;
+        if(originPower===null||originPower===undefined||isNaN(originPower)){
+          originPower = null;
+          if(!branchErr.get(b.id))
+            branchErr.set(b.id, b.origem.porta==='passagem'
+              ? 'A caixa de origem não possui perna de passagem (splitter balanceado ou "-")'
+              : 'Origem sem potência calculada');
+        }
+      }
+    }
+
+    let prev = null, cum = originCum;
+    b.ctos.forEach((c,i)=>{
+      const d = parseFloat(c.dist)||0;   // distância DO TRECHO (caixa anterior → esta)
+      if(cum!==null&&cum!==undefined) cum += d;
+      let chegada = null;
+      if(i===0){
+        if(originPower!==null) chegada = originPower - d*p.km - (isTrunk?p.inicial:0) - p.trecho;
+      }else if(prev!==null){
+        chegada = prev - d*p.km - p.trecho;
+      }
+      let derivacao=null, passagem=null, cliente=null;
+      if(chegada!==null){
+        const s1 = lossOf(c.sp1);
+        derivacao = chegada - s1.p1;
+        passagem  = isEnd(c.sp1) ? null : chegada - s1.p2; // sem P2 quando encerra
+        cliente   = (c.sp2==='-') ? derivacao : derivacao - lossOf(c.sp2).p1;
+      }
+      boxRes.set(c.id,{chegada,derivacao,passagem,cliente,cum});
+      // splitter balanceado ou '-' encerra a cascata: não há porta de passagem
+      prev = isEnd(c.sp1) ? null : passagem;
+    });
+    state.set(b.id,'done');
+  }
+
+  branches.forEach(computeBranch);
+  return {boxRes, branchErr, originPowerOf};
+
+  function originPowerOf(b){
+    if(b.origem.tipo==='olt') return p.olt;
+    const r = boxRes.get(b.origem.boxId);
+    return r ? r[b.origem.porta] : null;
+  }
+}
+
+/* ===== diagrama de topologia (SVG) =====
+   Cada ramal ocupa uma "faixa" horizontal. Ramais são ligados à caixa de origem
+   por um cotovelo com o rótulo da porta (P1 / P2 / S2).
+   maxW (opcional, usado no PDF): quebra a cascata em múltiplas linhas
+   quando ultrapassa essa largura, com uma serpentina de continuação. */
+function buildDiagramSVG(light, maxW){
+  const p = params();
+  const {boxRes} = computeAll();
+  const C = light
+    ? {box:'#ffffff',stroke:'#9aa7b8',line:'#6b7a8e',text:'#16202e',muted:'#5a6878',
+       accent:'#a8690d',ok:'#178a55',warn:'#9c7400',bad:'#c43040',branch:'#1d6fc4',oltFill:'#fff7e8'}
+    : {box:'#0f1828',stroke:'#33415c',line:'#3e5070',text:'#dce6f5',muted:'#7e90ab',
+       accent:'#ffb13d',ok:'#3ad08a',warn:'#f5c451',bad:'#ff5d6c',branch:'#5fa8ff',oltFill:'#1a2336'};
+  const BW=182, BH=92, SEG=70, LANE=BH+62, X0=24, Y0=30, OLTW=92, OLTH=62;
+  const WRAPX=X0+46; // início das linhas de continuação
+  const fmtkm = v => (parseFloat(v)||0).toFixed(2).replace('.',',')+' km';
+
+  // ordena por profundidade de dependência (tronco antes dos ramais que dele derivam)
+  const depthMemo=new Map();
+  function depth(b){
+    if(b.origem.tipo==='olt') return 0;
+    if(depthMemo.has(b.id)) return depthMemo.get(b.id);
+    depthMemo.set(b.id,0); // proteção contra ciclo
+    const f=findBox(b.origem.boxId);
+    const d=f?depth(f.branch)+1:0;
+    depthMemo.set(b.id,d); return d;
+  }
+  const ordered=[...branches].map((b,i)=>({b,i})).sort((a,bb)=>depth(a.b)-depth(bb.b)||a.i-bb.i).map(x=>x.b);
+
+  const pos=new Map();
+  let parts=[], maxX=0, curY=Y0;
+
+  ordered.forEach(b=>{
+    const laneY=curY;
+    const isTrunk=b.origem.tipo==='olt';
+    let startX, portLbl='';
+
+    if(isTrunk){
+      const oy=laneY+(BH-OLTH)/2;
+      parts.push(`<rect x="${X0}" y="${oy}" width="${OLTW}" height="${OLTH}" rx="8" fill="${C.oltFill}" stroke="${C.accent}" stroke-width="1.6"/>`);
+      parts.push(`<text x="${X0+OLTW/2}" y="${oy+24}" text-anchor="middle" font-size="14" font-weight="700" fill="${C.accent}">OLT</text>`);
+      parts.push(`<text x="${X0+OLTW/2}" y="${oy+44}" text-anchor="middle" font-size="11" font-family="monospace" fill="${C.text}">${fmt(p.olt)} dBm</text>`);
+      startX=X0+OLTW+SEG;
+      if(b.ctos.length){
+        parts.push(`<line x1="${X0+OLTW}" y1="${laneY+BH/2}" x2="${startX}" y2="${laneY+BH/2}" stroke="${C.line}" stroke-width="1.6"/>`);
+        parts.push(`<text x="${X0+OLTW+SEG/2}" y="${laneY+BH/2-7}" text-anchor="middle" font-size="10.5" font-family="monospace" fill="${C.muted}">${fmtkm(b.ctos[0].dist)}</text>`);
+      }
+    }else{
+      const f=findBox(b.origem.boxId);
+      const op=f?pos.get(f.cto.id):null;
+      const pct=f?pctOf(f.cto.sp1,b.origem.porta):'';
+      portLbl = pct || (b.origem.porta==='derivacao'?'deriv.':b.origem.porta==='passagem'?'pass.':'atend.');
+      if(op){
+        startX=op.x+BW/2+SEG;
+        if(maxW && startX+BW>maxW) startX=WRAPX; // origem muito à direita: começa à esquerda
+        const vx=op.x+BW/2;
+        const lblW=Math.max(28,portLbl.length*6.5+10);
+        parts.push(`<path d="M ${vx} ${op.y+BH} L ${vx} ${laneY+BH/2} L ${startX} ${laneY+BH/2}" fill="none" stroke="${C.branch}" stroke-width="1.6"/>`);
+        parts.push(`<rect x="${vx+5}" y="${op.y+BH+4}" width="${lblW}" height="16" rx="3" fill="${C.branch}" opacity="0.15"/>`);
+        parts.push(`<text x="${vx+5+lblW/2}" y="${op.y+BH+16}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${C.branch}">${portLbl}</text>`);
+        if(b.ctos.length)
+          parts.push(`<text x="${startX-SEG/2}" y="${laneY+BH/2-7}" text-anchor="middle" font-size="10.5" font-family="monospace" fill="${C.muted}">${fmtkm(b.ctos[0].dist)}</text>`);
+      }else{
+        startX=X0+OLTW+SEG;
+        parts.push(`<text x="${X0}" y="${laneY+BH/2}" font-size="11" fill="${C.bad}">⚠ origem inválida</text>`);
+      }
+    }
+
+    parts.push(`<text x="${isTrunk?startX:Math.min(startX,maxW?maxW-150:startX)}" y="${laneY-8}" font-size="11" font-weight="600" fill="${isTrunk?C.accent:C.branch}">${esc(b.nome)}</text>`);
+
+    let x=startX, rowIdx=0;
+    b.ctos.forEach((c,k)=>{
+      if(k>0){
+        let nx=x+BW+SEG;
+        if(maxW && nx+BW>maxW){
+          // quebra de linha: serpentina passando pelo vão entre as faixas
+          const fromMidY=laneY+rowIdx*LANE+BH/2;
+          rowIdx++;
+          const toMidY=laneY+rowIdx*LANE+BH/2;
+          const gapY=laneY+(rowIdx-1)*LANE+BH+28;
+          nx=WRAPX;
+          parts.push(`<path d="M ${x+BW} ${fromMidY} h 16 L ${x+BW+16} ${gapY} L ${X0+16} ${gapY} L ${X0+16} ${toMidY} L ${nx} ${toMidY}" fill="none" stroke="${C.line}" stroke-width="1.6" stroke-dasharray="6 4"/>`);
+          parts.push(`<text x="${nx-6}" y="${toMidY-7}" text-anchor="end" font-size="10.5" font-family="monospace" fill="${C.muted}">${fmtkm(c.dist)}</text>`);
+        }else{
+          const midY=laneY+rowIdx*LANE+BH/2;
+          parts.push(`<line x1="${x+BW}" y1="${midY}" x2="${nx}" y2="${midY}" stroke="${C.line}" stroke-width="1.6"/>`);
+          parts.push(`<text x="${nx-SEG/2}" y="${midY-7}" text-anchor="middle" font-size="10.5" font-family="monospace" fill="${C.muted}">${fmtkm(c.dist)}</text>`);
+        }
+        x=nx;
+      }
+      const by=laneY+rowIdx*LANE;
+      const r=boxRes.get(c.id)||{};
+      const st=statusOf(r.cliente,p);
+      const noSig = r.chegada===null||r.chegada===undefined;
+      const strokeC = noSig?C.muted : st==='bad'?C.bad : st==='warn'?C.warn : st==='ok'?C.ok : C.stroke;
+
+      parts.push(`<rect x="${x}" y="${by}" width="${BW}" height="${BH}" rx="8" fill="${C.box}" stroke="${strokeC}" stroke-width="1.6" ${noSig?'stroke-dasharray="5 4"':''}/>`);
+      parts.push(`<text x="${x+10}" y="${by+19}" font-size="12.5" font-weight="700" fill="${C.text}">${esc(c.nome)}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+37}" font-size="10.5" font-family="monospace" fill="${C.muted}">S1 ${c.sp1}${isEnd(c.sp1)?' (fim)':''} · S2 ${c.sp2}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+55}" font-size="10.5" font-family="monospace" fill="${C.muted}">Chegada ${fmt(r.chegada)} · Σ ${r.cum!==null&&r.cum!==undefined?fmt(r.cum)+' km':'—'}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+76}" font-size="12" font-weight="700" font-family="monospace" fill="${noSig?C.bad:strokeC}">${noSig?'SEM SINAL':'Cliente '+fmt(r.cliente)+' dBm'}</text>`);
+      pos.set(c.id,{x,y:by});
+      maxX=Math.max(maxX,x+BW);
+    });
+    if(!b.ctos.length) maxX=Math.max(maxX,startX+40);
+    curY += (rowIdx+1)*LANE;
+  });
+
+  const W=Math.max(maxX+X0, 760), H=curY+14;
+  parts.push(`<text x="${X0}" y="${H-2}" font-size="10" fill="${C.muted}">Linha horizontal = perna de passagem · Cotovelo azul = alimentação do ramal pela perna indicada (com a porcentagem do splitter) · Linha tracejada = continuação da mesma cascata · Caixa tracejada = sem sinal</text>`);
+  return {svg:`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H+14}" viewBox="0 0 ${W} ${H+14}" font-family="Segoe UI, system-ui, sans-serif">${parts.join('')}</svg>`, W, H:H+14};
+}
+
+/* ===== render ===== */
+function splitterOptions(sel, balancedOnly){
+  return losses
+    .filter(l => !balancedOnly || l.tipo.includes(':') || l.tipo==='-')
+    .map(l=>`<option value="${l.tipo}" ${l.tipo===sel?'selected':''}>${l.tipo}</option>`).join('');
+}
+function origemOptions(b){
+  let opts = `<option value="olt" ${b.origem.tipo==='olt'?'selected':''}>OLT (tronco)</option>`;
+  for(const ob of branches){
+    if(ob.id===b.id) continue;
+    for(const c of ob.ctos){
+      for(const porta of ['derivacao','passagem','cliente']){
+        const v = `box|${c.id}|${porta}`;
+        const sel = b.origem.tipo==='box' && b.origem.boxId===c.id && b.origem.porta===porta;
+        const pct = pctOf(c.sp1, porta);
+        opts += `<option value="${v}" ${sel?'selected':''}>${esc(c.nome)} · ${PORT_LABEL[porta]}${pct?' ('+pct+')':''}</option>`;
+      }
+    }
+  }
+  return opts;
+}
+
+function render(){
+  const p = params();
+  const {boxRes, branchErr, originPowerOf} = computeAll();
+  const pWarn = ((p.limWarn-GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100);
+  const pBad  = ((p.limBad -GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100);
+
+  $('branches').innerHTML = branches.map(b=>{
+    const isTrunk = b.origem.tipo==='olt';
+    const err = branchErr.get(b.id);
+    const feed = originPowerOf(b);
+
+    const rows = b.ctos.map((c,i)=>{
+      const r = boxRes.get(c.id)||{};
+      const st = statusOf(r.cliente,p);
+      const pos = r.cliente!==null&&!isNaN(r.cliente)?Math.max(0,Math.min(100,(r.cliente-GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100)):null;
+      const deltaTxt = (r.cum!==null&&r.cum!==undefined)?` <span class="hint" title="Distância acumulada até a OLT">Σ ${fmt(r.cum)}</span>`:'';
+      const sug = !isEnd(c.sp1) ? suggestSp1(r.chegada, c.sp2, p) : null;
+      let sugHtml = '';
+      if(sug){
+        if(sug.tipo===c.sp1){
+          sugHtml = `<div class="sug match" title="Já é o melhor splitter para o limite de atenção">✓ ótimo</div>`;
+        }else{
+          sugHtml = `<div class="sug ${sug.insuf?'insuf':''}" onclick="updBox(${c.id},'sp1','${sug.tipo}')"
+            title="${sug.insuf?'Nem o 50/50 atinge o limite de atenção neste ponto':'Aplicar sugestão'} — cliente ficaria em ${fmt(sug.cliente)} dBm">⚡ ${sug.tipo} → ${fmt(sug.cliente)}</div>`;
+        }
+      }
+      return `<tr>
+        <td class="hint">${i+1}</td>
+        <td><input class="nome" type="text" value="${esc(c.nome)}" onchange="updBox(${c.id},'nome',this.value)"></td>
+        <td><input class="dist" type="number" step="0.01" value="${esc(c.dist)}" onchange="updBox(${c.id},'dist',this.value)">${deltaTxt}</td>
+        <td class="num">${fmt(r.chegada)}</td>
+        <td><select onchange="updBox(${c.id},'sp1',this.value)">${splitterOptions(c.sp1,false)}</select>${sugHtml}</td>
+        <td class="num">${isEnd(c.sp1)?'<span class="hint">fim</span>':fmt(r.passagem)+(pctOf(c.sp1,'passagem')?` <span class="hint">${pctOf(c.sp1,'passagem')}</span>`:'')}</td>
+        <td class="num">${fmt(r.derivacao)}${pctOf(c.sp1,'derivacao')?` <span class="hint">${pctOf(c.sp1,'derivacao')}</span>`:''}</td>
+        <td><select onchange="updBox(${c.id},'sp2',this.value)">${splitterOptions(c.sp2,true)}</select></td>
+        <td class="num ${st||''}">${fmt(r.cliente)}</td>
+        <td>${st?`<span class="pill ${st}">${st==='ok'?'OK':st==='warn'?'Atenção':'Crítico'}</span>`
+          :(r.chegada===null||r.chegada===undefined?`<span class="pill bad" title="Não há perna de passagem alimentando esta caixa — a anterior encerra a cascata (splitter balanceado ou '-'), ou a origem do ramal está sem potência">Sem sinal</span>`:'')}</td>
+        <td>${pos!==null?`<div class="gauge" style="--p-warn:${pWarn}%;--p-bad:${pBad}%" title="${fmt(r.cliente)} dBm">
+          <div class="needle ${st||''}" style="left:calc(${pos}% - 1px)"></div></div>`:''}</td>
+        <td><span class="rowbtns">
+          <button class="icon" title="Criar ramal a partir desta caixa" onclick="branchFrom(${c.id})" style="color:var(--branch)">⑂</button>
+          <button class="icon" title="Mover para cima" onclick="moveBox(${c.id},-1)">↑</button>
+          <button class="icon" title="Mover para baixo" onclick="moveBox(${c.id},1)">↓</button>
+          <button class="icon" title="Duplicar" onclick="dupBox(${c.id})">⧉</button>
+          <button class="icon danger" title="Remover" onclick="delBox(${c.id})">✕</button>
+        </span></td>
+      </tr>`;
+    }).join('');
+
+    const clientes = b.ctos.map(c=>(boxRes.get(c.id)||{}).cliente).filter(v=>v!==null&&!isNaN(v));
+    const pior = clientes.length?Math.min(...clientes):null;
+    const criticos = b.ctos.filter(c=>statusOf((boxRes.get(c.id)||{}).cliente,p)==='bad').length;
+    const ext = b.ctos.reduce((s,c)=>s+(parseFloat(c.dist)||0),0);
+
+    return `<div class="branch ${isTrunk?'is-trunk':'is-ramal'}">
+      <div class="branch-head">
+        <span class="tag ${isTrunk?'trunk':'ramal'}">${isTrunk?'Tronco':'Ramal'}</span>
+        <input class="bname" type="text" value="${esc(b.nome)}" onchange="updBranch(${b.id},'nome',this.value)">
+        <span class="origem">Alimentado por
+          <select onchange="setOrigem(${b.id},this.value)">${origemOptions(b)}</select>
+          <span class="feed">${feed!==null&&!isNaN(feed)?fmt(feed)+' dBm':'—'}</span>
+        </span>
+        ${err?`<span class="err">⚠ ${err}</span>`:''}
+        <div class="spacer"></div>
+        <button onclick="optimizeBranch(${b.id})" title="Aplica em cascata o melhor splitter desbalanceado de cada caixa para o limite de atenção" style="color:var(--accent)">⚡ Sugerir splitters</button>
+        <button onclick="addBox(${b.id})">+ Caixa</button>
+        ${isTrunk&&branches.filter(x=>x.origem.tipo==='olt').length===1?'':`<button class="danger" onclick="delBranch(${b.id})">Excluir ramal</button>`}
+      </div>
+      <div class="tablewrap">
+        ${b.ctos.length?`<table>
+          <thead><tr>
+            <th>#</th><th>Caixa</th><th>Trecho (km)</th><th>Chegada</th>
+            <th>Splitter 1</th><th>Passagem →</th><th>Derivação</th>
+            <th>Splitter 2 (atend.)</th><th>Cliente (dBm)</th><th>Status</th><th>Orçamento</th><th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`:`<div class="empty">Ramal vazio — clique em <b>+ Caixa</b>.</div>`}
+      </div>
+      ${b.ctos.length?`<div class="branch-foot">
+        <div class="item"><div class="k">Caixas</div><div class="v">${b.ctos.length}</div></div>
+        <div class="item"><div class="k">Extensão</div><div class="v">${fmt(ext)} km</div></div>
+        <div class="item"><div class="k">Pior cliente</div><div class="v" style="color:${pior!==null?(statusOf(pior,p)==='bad'?'var(--bad)':statusOf(pior,p)==='warn'?'var(--warn)':'var(--ok)'):'var(--muted)'}">${fmt(pior)} dBm</div></div>
+        <div class="item"><div class="k">Críticas</div><div class="v" style="color:${criticos?'var(--bad)':'var(--muted)'}">${criticos}</div></div>
+      </div>`:''}
+    </div>`;
+  }).join('');
+
+  // resumo global
+  const allBoxes = branches.flatMap(b=>b.ctos);
+  const allCli = allBoxes.map(c=>(boxRes.get(c.id)||{}).cliente).filter(v=>v!==null&&!isNaN(v));
+  const piorG = allCli.length?Math.min(...allCli):null;
+  const critG = allBoxes.filter(c=>statusOf((boxRes.get(c.id)||{}).cliente,p)==='bad').length;
+  $('globalSummary').innerHTML = `
+    <div class="item"><div class="k">Ramais</div><div class="v">${branches.length}</div></div>
+    <div class="item"><div class="k">Caixas</div><div class="v">${allBoxes.length}</div></div>
+    <div class="item"><div class="k">Pior cliente da rede</div><div class="v" style="color:${piorG!==null?(statusOf(piorG,p)==='bad'?'var(--bad)':statusOf(piorG,p)==='warn'?'var(--warn)':'var(--ok)'):'var(--muted)'}">${fmt(piorG)} dBm</div></div>
+    <div class="item"><div class="k">Caixas críticas</div><div class="v" style="color:${critG?'var(--bad)':'var(--muted)'}">${critG}</div></div>`;
+
+  const d = buildDiagramSVG(false);
+  lastDiagramSize = {W:d.W, H:d.H};
+  $('diagramCanvas').innerHTML = d.svg;
+  // reenquadra automaticamente quando a estrutura da rede muda (caixas/ramais)
+  const sig = branches.map(b=>b.id+':'+b.ctos.length).join(',');
+  if(!vz.fitDone || sig!==vz.lastSig){ vz.fitDone=true; vz.lastSig=sig; fitDiagram(); }
+  else applyVZ();
+}
+
+/* ===== pan/zoom do quadro de topologia ===== */
+let lastDiagramSize = {W:800,H:400};
+const vz = {s:1, x:8, y:6, fitDone:false, lastSig:''};
+function applyVZ(){
+  const c=$('diagramCanvas');
+  // zoom redimensionando o próprio SVG (vetorial = sempre nítido),
+  // em vez de transform:scale (que rasteriza e fica borrado)
+  const svg=c.querySelector('svg');
+  if(svg){
+    svg.setAttribute('width', Math.round(lastDiagramSize.W*vz.s));
+    svg.setAttribute('height', Math.round(lastDiagramSize.H*vz.s));
+  }
+  c.style.transform = `translate(${vz.x}px,${vz.y}px)`;
+}
+window.fitDiagram = ()=>{
+  const vp=$('diagramViewport');
+  const s=Math.min((vp.clientWidth-16)/lastDiagramSize.W,(vp.clientHeight-16)/lastDiagramSize.H,1.5);
+  vz.s=Math.max(0.12,s); vz.x=8; vz.y=6; applyVZ();
+};
+window.zoomReset = ()=>{ vz.s=1; vz.x=8; vz.y=6; applyVZ(); };
+window.zoomDiagram = f=>{
+  const vp=$('diagramViewport');
+  const cx=vp.clientWidth/2, cy=vp.clientHeight/2;
+  vzZoomAt(cx,cy,f);
+};
+function vzZoomAt(cx,cy,f){
+  const ns=Math.min(3,Math.max(0.12,vz.s*f));
+  const real=ns/vz.s;
+  vz.x = cx-(cx-vz.x)*real;
+  vz.y = cy-(cy-vz.y)*real;
+  vz.s = ns; applyVZ();
+}
+(function initViewport(){
+  const vp=$('diagramViewport');
+  const pointers=new Map();
+  let drag=null, pinch=null;
+  vp.addEventListener('pointerdown',e=>{
+    pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    vp.setPointerCapture(e.pointerId);
+    if(pointers.size===1){
+      drag={x:e.clientX,y:e.clientY,ox:vz.x,oy:vz.y};
+      vp.classList.add('dragging');
+    }else if(pointers.size===2){
+      drag=null;
+      const pts=[...pointers.values()];
+      pinch={d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y),s:vz.s};
+    }
+  });
+  vp.addEventListener('pointermove',e=>{
+    if(!pointers.has(e.pointerId))return;
+    pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pinch&&pointers.size===2){
+      const pts=[...pointers.values()];
+      const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      const rect=vp.getBoundingClientRect();
+      const cx=(pts[0].x+pts[1].x)/2-rect.left, cy=(pts[0].y+pts[1].y)/2-rect.top;
+      const target=Math.min(3,Math.max(0.12,pinch.s*(d/pinch.d)));
+      vzZoomAt(cx,cy,target/vz.s);
+    }else if(drag){
+      vz.x=drag.ox+(e.clientX-drag.x);
+      vz.y=drag.oy+(e.clientY-drag.y);
+      applyVZ();
+    }
+  });
+  const end=e=>{
+    pointers.delete(e.pointerId);
+    if(pointers.size<2)pinch=null;
+    if(pointers.size===0){drag=null;vp.classList.remove('dragging');}
+  };
+  vp.addEventListener('pointerup',end);
+  vp.addEventListener('pointercancel',end);
+  vp.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const rect=vp.getBoundingClientRect();
+    vzZoomAt(e.clientX-rect.left, e.clientY-rect.top, e.deltaY<0?1.13:1/1.13);
+  },{passive:false});
+  // reenquadra ao redimensionar a janela / girar a tela
+  let rsz=null;
+  window.addEventListener('resize',()=>{
+    clearTimeout(rsz);
+    rsz=setTimeout(fitDiagram,180);
+  });
+})();
+
+function renderLosses(){
+  $('lossGrid').innerHTML = losses.filter(l=>l.tipo!=='-').map((l,idx)=>`
+    <div class="loss-item">
+      <div class="t">${l.tipo}</div>
+      <div class="pair">Deriv. <input type="number" step="0.05" value="${l.p1}" onchange="updLoss(${idx},'p1',this.value)"></div>
+      <div class="pair" style="margin-top:4px">Pass. <input type="number" step="0.05" value="${l.p2}" onchange="updLoss(${idx},'p2',this.value)"></div>
+    </div>`).join('');
+}
+
+/* ===== ações ===== */
+window.updLoss = (idx,k,v)=>{ losses[idx][k]=parseFloat(v)||0; render(); };
+window.updBox = (id,k,v)=>{ const f=findBox(id); if(f){f.cto[k]=v; render();} };
+window.delBox = id=>{ const f=findBox(id); if(f){f.branch.ctos=f.branch.ctos.filter(c=>c.id!==id); render();} };
+window.dupBox = id=>{ const f=findBox(id); if(!f)return;
+  const i=f.branch.ctos.indexOf(f.cto);
+  f.branch.ctos.splice(i+1,0,{...f.cto,id:nextBoxId++,nome:f.cto.nome+' (cópia)'}); render(); };
+window.moveBox = (id,dir)=>{ const f=findBox(id); if(!f)return;
+  const a=f.branch.ctos, i=a.indexOf(f.cto), j=i+dir;
+  if(j<0||j>=a.length)return; [a[i],a[j]]=[a[j],a[i]]; render(); };
+window.addBox = bid=>{
+  const b=branches.find(x=>x.id===bid); if(!b)return;
+  const dist = (!b.ctos.length && b.origem.tipo==='olt') ? 1 : 0.2;
+  b.ctos.push({id:nextBoxId++, nome:`CTO-${String(nextBoxId).padStart(2,'0')}`,
+    dist:dist.toFixed(2), sp1:'10/90', sp2:'1:8'});
+  render();
+};
+window.updBranch = (bid,k,v)=>{ const b=branches.find(x=>x.id===bid); if(b){b[k]=v; render();} };
+window.setOrigem = (bid,val)=>{
+  const b=branches.find(x=>x.id===bid); if(!b)return;
+  if(val==='olt') b.origem={tipo:'olt'};
+  else{ const [,boxId,porta]=val.split('|'); b.origem={tipo:'box',boxId:parseInt(boxId),porta}; }
+  render();
+};
+window.optimizeBranch = bid=>{
+  const b=branches.find(x=>x.id===bid); if(!b)return;
+  const p=params();
+  // percorre em cascata: a escolha de cada caixa muda a chegada das seguintes,
+  // por isso recalcula a rede a cada passo (da primeira para a última)
+  for(const c of b.ctos){
+    if(isEnd(c.sp1)) continue; // caixa final (balanceado ou '-') não recebe sugestão
+    const {boxRes}=computeAll();
+    const r=boxRes.get(c.id);
+    const sug=suggestSp1(r?r.chegada:null, c.sp2, p);
+    if(sug) c.sp1=sug.tipo;
+  }
+  render();
+};
+window.delBranch = bid=>{
+  const b=branches.find(x=>x.id===bid);
+  if(b && confirm(`Excluir o ramal "${b.nome}" e suas caixas?`)){
+    branches=branches.filter(x=>x.id!==bid); render();
+  }
+};
+window.branchFrom = boxId=>{
+  const f=findBox(boxId); if(!f)return;
+  branches.push({id:nextBranchId++, nome:`Ramal de ${f.cto.nome}`,
+    origem:{tipo:'box',boxId,porta:'derivacao'}, ctos:[]});
+  render();
+};
+$('btnAddBranch').onclick = ()=>{
+  branches.push({id:nextBranchId++, nome:`Ramal ${nextBranchId-1}`, origem:{tipo:'olt'}, ctos:[]});
+  render();
+};
+
+['pOlt','pInicial','pKm','pTrecho','limWarn','limBad','pNome'].forEach(id=>$(id).addEventListener('input',render));
+
+/* ===== exportação / importação ===== */
+$('btnExportJson').onclick = ()=>{
+  const data={versao:3, parametros:params(), perdas:losses, ramais:branches};
+  download(($('pNome').value||'projeto')+'.json', JSON.stringify(data,null,2),'application/json');
+};
+$('btnImport').onclick = ()=>$('fileInput').click();
+$('fileInput').onchange = e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{ try{
+      const d=JSON.parse(r.result);
+      if(d.parametros){
+        $('pNome').value=d.parametros.nome??'Projeto';
+        $('pOlt').value=d.parametros.olt; $('pInicial').value=d.parametros.inicial;
+        $('pKm').value=d.parametros.km; $('pTrecho').value=d.parametros.trecho??0;
+        $('limWarn').value=d.parametros.limWarn; $('limBad').value=d.parametros.limBad;
+      }
+      if(Array.isArray(d.perdas)) losses=d.perdas;
+      if(Array.isArray(d.ramais)){
+        branches=d.ramais;
+      }else if(Array.isArray(d.cascata)){ // formato antigo (versão 1)
+        branches=[{id:1,nome:'Tronco',origem:{tipo:'olt'},ctos:d.cascata}];
+      }
+      // versões 1 e 2 usavam distância ACUMULADA — converte para distância de trecho
+      if((d.versao||1) < 3){
+        for(const b of branches){
+          let prev=0;
+          for(const c of b.ctos){
+            const cumv=parseFloat(c.dist)||0;
+            c.dist=(cumv-prev).toFixed(2);
+            prev=cumv;
+          }
+        }
+      }
+      nextBoxId = Math.max(0,...branches.flatMap(b=>b.ctos.map(c=>c.id)))+1;
+      nextBranchId = Math.max(0,...branches.map(b=>b.id))+1;
+      renderLosses(); render();
+    }catch(err){ alert('Arquivo inválido: '+err.message); }
+    e.target.value='';
+  };
+  r.readAsText(f);
+};
+$('btnExportCsv').onclick = ()=>{
+  const p=params(); const {boxRes}=computeAll(); const sep=';';
+  const head=['Ramal','Origem','#','Caixa','Trecho (km)','Acum. OLT (km)','Chegada (dBm)','Splitter 1','Passagem (dBm)','Derivação (dBm)','Splitter 2','Cliente (dBm)','Status'].join(sep);
+  const n=v=>fmt(v).replace('.',',');
+  const rows=[];
+  for(const b of branches){
+    const origemTxt = b.origem.tipo==='olt' ? 'OLT'
+      : (()=>{const f=findBox(b.origem.boxId);return f?`${f.cto.nome} (${PORT_LABEL[b.origem.porta]})`:'?';})();
+    b.ctos.forEach((c,i)=>{
+      const r=boxRes.get(c.id)||{}; const st=statusOf(r.cliente,p);
+      rows.push([b.nome,origemTxt,i+1,c.nome,String(c.dist).replace('.',','),n(r.cum),n(r.chegada),c.sp1,
+        isEnd(c.sp1)?'fim':n(r.passagem),n(r.derivacao),c.sp2,n(r.cliente),
+        st==='ok'?'OK':st==='warn'?'Atenção':st==='bad'?'Crítico':'—'].join(sep));
+    });
+  }
+  download(($('pNome').value||'projeto')+'.csv','\uFEFF'+[head,...rows].join('\n'),'text/csv');
+};
+function download(name,content,type){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([content],{type}));
+  a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ===== relatório PDF (abre janela de impressão — salvar como PDF) ===== */
+$('btnExportPdf').onclick = ()=>{
+  const p=params(); const {boxRes}=computeAll();
+  const {svg}=buildDiagramSVG(true, 1380); // quebra automática para caber na página
+  const n=v=>fmt(v);
+  const stTxt={ok:'OK',warn:'Atenção',bad:'Crítico'};
+  const stCol={ok:'#178a55',warn:'#9c7400',bad:'#c43040'};
+
+  const tables = branches.map(b=>{
+    const origemTxt = b.origem.tipo==='olt' ? 'OLT'
+      : (()=>{const f=findBox(b.origem.boxId);return f?`${esc(f.cto.nome)} — ${PORT_LABEL[b.origem.porta]}`:'origem inválida';})();
+    const rows = b.ctos.map((c,i)=>{
+      const r=boxRes.get(c.id)||{}; const st=statusOf(r.cliente,p);
+      const noSig=r.chegada===null||r.chegada===undefined;
+      return `<tr>
+        <td>${i+1}</td><td>${esc(c.nome)}</td>
+        <td class="r">${String(c.dist).replace('.',',')}</td>
+        <td class="r">${r.cum!==null&&r.cum!==undefined?n(r.cum).replace('.',','):'—'}</td>
+        <td class="r">${n(r.chegada)}</td>
+        <td>${c.sp1}${isEnd(c.sp1)?' (fim)':''}</td>
+        <td class="r">${isEnd(c.sp1)?'—':n(r.passagem)}</td>
+        <td class="r">${n(r.derivacao)}</td>
+        <td>${c.sp2}</td>
+        <td class="r"><b>${n(r.cliente)}</b></td>
+        <td style="color:${noSig?'#c43040':st?stCol[st]:'#666'};font-weight:600">${noSig?'Sem sinal':st?stTxt[st]:'—'}</td>
+      </tr>`;
+    }).join('');
+    return `<h3>${esc(b.nome)} <span class="org">· alimentado por ${origemTxt}</span></h3>
+      <table><thead><tr>
+        <th>#</th><th>Caixa</th><th>Trecho (km)</th><th>Σ OLT (km)</th><th>Chegada (dBm)</th>
+        <th>Splitter 1</th><th>Passagem (dBm)</th><th>Derivação (dBm)</th><th>Splitter 2</th><th>Cliente (dBm)</th><th>Status</th>
+      </tr></thead><tbody>${rows||'<tr><td colspan="11">Ramal vazio</td></tr>'}</tbody></table>`;
+  }).join('');
+
+  const dt = new Date().toLocaleString('pt-BR');
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>${esc(p.nome)} — Cálculo de Potência Óptica</title>
+<style>
+  body{font-family:'Segoe UI',system-ui,sans-serif;color:#16202e;margin:28px;font-size:12px}
+  h1{font-size:18px;margin-bottom:2px}
+  .sub{color:#5a6878;font-size:11px;margin-bottom:14px}
+  .params{display:flex;gap:18px;flex-wrap:wrap;border:1px solid #ccd4de;border-radius:8px;padding:9px 14px;margin-bottom:16px}
+  .params div b{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#5a6878;font-weight:600}
+  .params div span{font-family:monospace;font-size:12.5px}
+  .diagram{margin:6px 0 18px;overflow:visible}
+  .diagram svg{max-width:100%;height:auto}
+  h3{font-size:13px;margin:16px 0 6px}
+  h3 .org{font-weight:400;color:#1d6fc4;font-size:11px}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px}
+  th{background:#eef1f5;text-align:left;padding:5px 7px;border:1px solid #ccd4de;font-size:10px;text-transform:uppercase;letter-spacing:.4px}
+  td{padding:4px 7px;border:1px solid #dde3ea}
+  td.r{text-align:right;font-family:monospace}
+  @page{size:A4 landscape;margin:12mm}
+  @media print{body{margin:0}}
+</style></head><body>
+  <h1>${esc(p.nome)}</h1>
+  <div class="sub">Cálculo de potência óptica — método desbalanceado · gerado em ${dt}</div>
+  <div class="params">
+    <div><b>Saída OLT</b><span>${n(p.olt)} dBm</span></div>
+    <div><b>Perda inicial</b><span>${n(p.inicial)} dB</span></div>
+    <div><b>Atenuação fibra</b><span>${n(p.km)} dB/km</span></div>
+    <div><b>Perda por trecho</b><span>${n(p.trecho)} dB</span></div>
+    <div><b>Limite atenção</b><span>${n(p.limWarn)} dBm</span></div>
+    <div><b>Limite crítico</b><span>${n(p.limBad)} dBm</span></div>
+  </div>
+  <div class="diagram">${svg}</div>
+  ${tables}
+  <script>window.onload=()=>setTimeout(()=>window.print(),350);<\/script>
+</body></html>`;
+
+  const w = window.open('','_blank');
+  if(!w){ alert('O navegador bloqueou a janela do relatório. Permita pop-ups para este arquivo.'); return; }
+  w.document.write(html);
+  w.document.close();
+};
+
+/* ===== exemplo inicial (distâncias por trecho) ===== */
+branches=[{
+  id:nextBranchId++, nome:'Tronco principal', origem:{tipo:'olt'},
+  ctos:[
+    {id:nextBoxId++, nome:'CTO-01', dist:'4.21', sp1:'20/80', sp2:'1:16'},
+    {id:nextBoxId++, nome:'CTO-02', dist:'0.20', sp1:'10/90', sp2:'1:4'},
+    {id:nextBoxId++, nome:'CTO-03', dist:'0.30', sp1:'10/90', sp2:'1:4'},
+    {id:nextBoxId++, nome:'CTO-04', dist:'0.50', sp1:'25/75', sp2:'-'},
+    {id:nextBoxId++, nome:'CE-05',  dist:'0.60', sp1:'20/80', sp2:'1:8'},
+    {id:nextBoxId++, nome:'CE-06',  dist:'0.20', sp1:'1:16',  sp2:'-'}
+  ]
+}];
+branches.push({
+  id:nextBranchId++, nome:'Ramal CTO-04', origem:{tipo:'box', boxId:4, porta:'derivacao'},
+  ctos:[
+    {id:nextBoxId++, nome:'CTO-04A', dist:'0.35', sp1:'30/70', sp2:'1:8'},
+    {id:nextBoxId++, nome:'CTO-04B', dist:'0.35', sp1:'1:8',   sp2:'-'}
+  ]
+});
+renderLosses();
+render();
+</script>
+</body>
+</html>

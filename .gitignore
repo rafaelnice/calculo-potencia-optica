@@ -1,0 +1,18 @@
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
+*~
+
+# Projetos exportados pelo sistema (dados locais do usuário)
+*.json
+!.github/**/*.json
+
+# Temporários
+*.tmp
+*.log
