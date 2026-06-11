@@ -352,6 +352,13 @@ function computeAll(){
   const boxRes = new Map();      // boxId -> {chegada, derivacao, passagem, cliente}
   const state = new Map();       // branchId -> 'visiting'|'done'
   const branchErr = new Map();   // branchId -> string
+  const branchWarn = new Map();  // branchId -> string (avisos não-bloqueantes)
+  // caixas cuja derivação alimenta um ramal: a perna está ocupada,
+  // logo não há splitter de atendimento nem cliente nelas
+  const derivFed = new Map();    // boxId -> branch
+  for(const b of branches){
+    if(b.origem.tipo==='box' && b.origem.porta==='derivacao') derivFed.set(b.origem.boxId, b);
+  }
 
   function computeBranch(b){
     if(state.get(b.id)==='done') return;
@@ -376,7 +383,17 @@ function computeAll(){
           if(!branchErr.get(b.id))
             branchErr.set(b.id, b.origem.porta==='passagem'
               ? 'A caixa de origem não possui perna de passagem (splitter balanceado ou "-")'
-              : 'Origem sem potência calculada');
+              : b.origem.porta==='cliente'
+                ? (derivFed.has(b.origem.boxId)
+                    ? 'A derivação da caixa de origem já alimenta um ramal — não há splitter de atendimento nela'
+                    : 'A caixa de origem não possui splitter de atendimento (S2 = "-")')
+                : 'Origem sem potência calculada');
+        }
+        // conflito físico: a passagem desta caixa também segue para a próxima do próprio ramal
+        if(b.origem.porta==='passagem'){
+          const idx = found.branch.ctos.indexOf(found.cto);
+          if(idx>=0 && idx<found.branch.ctos.length-1 && !isEnd(found.cto.sp1))
+            branchWarn.set(b.id,'Conflito: a passagem de '+found.cto.nome+' também alimenta a próxima caixa de "'+found.branch.nome+'" — a mesma perna não pode ir para dois lugares');
         }
       }
     }
@@ -396,7 +413,9 @@ function computeAll(){
         const s1 = lossOf(c.sp1);
         derivacao = chegada - s1.p1;
         passagem  = isEnd(c.sp1) ? null : chegada - s1.p2; // sem P2 quando encerra
-        cliente   = (c.sp2==='-') ? derivacao : derivacao - lossOf(c.sp2).p1;
+        // se a derivação alimenta um ramal, a perna está ocupada: não há cliente local
+        cliente   = derivFed.has(c.id) ? null
+                  : (c.sp2==='-') ? derivacao : derivacao - lossOf(c.sp2).p1;
       }
       boxRes.set(c.id,{chegada,derivacao,passagem,cliente,cum});
       // splitter balanceado ou '-' encerra a cascata: não há porta de passagem
@@ -406,7 +425,7 @@ function computeAll(){
   }
 
   branches.forEach(computeBranch);
-  return {boxRes, branchErr, originPowerOf};
+  return {boxRes, branchErr, branchWarn, derivFed, originPowerOf};
 
   function originPowerOf(b){
     if(b.origem.tipo==='olt') return p.olt;
@@ -422,7 +441,7 @@ function computeAll(){
    quando ultrapassa essa largura, com uma serpentina de continuação. */
 function buildDiagramSVG(light, maxW){
   const p = params();
-  const {boxRes} = computeAll();
+  const {boxRes, derivFed} = computeAll();
   const C = light
     ? {box:'#ffffff',stroke:'#9aa7b8',line:'#6b7a8e',text:'#16202e',muted:'#5a6878',
        accent:'#a8690d',ok:'#178a55',warn:'#9c7400',bad:'#c43040',branch:'#1d6fc4',oltFill:'#fff7e8'}
@@ -513,9 +532,9 @@ function buildDiagramSVG(light, maxW){
 
       parts.push(`<rect x="${x}" y="${by}" width="${BW}" height="${BH}" rx="8" fill="${C.box}" stroke="${strokeC}" stroke-width="1.6" ${noSig?'stroke-dasharray="5 4"':''}/>`);
       parts.push(`<text x="${x+10}" y="${by+19}" font-size="12.5" font-weight="700" fill="${C.text}">${esc(c.nome)}</text>`);
-      parts.push(`<text x="${x+10}" y="${by+37}" font-size="10.5" font-family="monospace" fill="${C.muted}">S1 ${c.sp1}${isEnd(c.sp1)?' (fim)':''} · S2 ${c.sp2}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+37}" font-size="10.5" font-family="monospace" fill="${C.muted}">S1 ${c.sp1}${isEnd(c.sp1)?' (fim)':''} · S2 ${derivFed.has(c.id)?'→ ramal':c.sp2}</text>`);
       parts.push(`<text x="${x+10}" y="${by+55}" font-size="10.5" font-family="monospace" fill="${C.muted}">Chegada ${fmt(r.chegada)} · Σ ${r.cum!==null&&r.cum!==undefined?fmt(r.cum)+' km':'—'}</text>`);
-      parts.push(`<text x="${x+10}" y="${by+76}" font-size="12" font-weight="700" font-family="monospace" fill="${noSig?C.bad:strokeC}">${noSig?'SEM SINAL':'Cliente '+fmt(r.cliente)+' dBm'}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+76}" font-size="12" font-weight="700" font-family="monospace" fill="${noSig?C.bad:(derivFed.has(c.id)?C.branch:strokeC)}">${noSig?'SEM SINAL':(derivFed.has(c.id)?'Derivação → ramal':'Cliente '+fmt(r.cliente)+' dBm')}</text>`);
       pos.set(c.id,{x,y:by});
       maxX=Math.max(maxX,x+BW);
     });
@@ -552,7 +571,7 @@ function origemOptions(b){
 
 function render(){
   const p = params();
-  const {boxRes, branchErr, originPowerOf} = computeAll();
+  const {boxRes, branchErr, branchWarn, derivFed, originPowerOf} = computeAll();
   const pWarn = ((p.limWarn-GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100);
   const pBad  = ((p.limBad -GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100);
 
@@ -566,7 +585,7 @@ function render(){
       const st = statusOf(r.cliente,p);
       const pos = r.cliente!==null&&!isNaN(r.cliente)?Math.max(0,Math.min(100,(r.cliente-GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100)):null;
       const deltaTxt = (r.cum!==null&&r.cum!==undefined)?` <span class="hint" title="Distância acumulada até a OLT">Σ ${fmt(r.cum)}</span>`:'';
-      const sug = !isEnd(c.sp1) ? suggestSp1(r.chegada, c.sp2, p) : null;
+      const sug = (!isEnd(c.sp1) && !derivFed.has(c.id)) ? suggestSp1(r.chegada, c.sp2, p) : null;
       let sugHtml = '';
       if(sug){
         if(sug.tipo===c.sp1){
@@ -584,8 +603,10 @@ function render(){
         <td><select onchange="updBox(${c.id},'sp1',this.value)">${splitterOptions(c.sp1,false)}</select>${sugHtml}</td>
         <td class="num">${isEnd(c.sp1)?'<span class="hint">fim</span>':fmt(r.passagem)+(pctOf(c.sp1,'passagem')?` <span class="hint">${pctOf(c.sp1,'passagem')}</span>`:'')}</td>
         <td class="num">${fmt(r.derivacao)}${pctOf(c.sp1,'derivacao')?` <span class="hint">${pctOf(c.sp1,'derivacao')}</span>`:''}</td>
-        <td><select onchange="updBox(${c.id},'sp2',this.value)">${splitterOptions(c.sp2,true)}</select></td>
-        <td class="num ${st||''}">${fmt(r.cliente)}</td>
+        <td>${derivFed.has(c.id)
+          ? `<span class="hint" title="A perna de derivação desta caixa alimenta o ramal \"${esc(derivFed.get(c.id).nome)}\" — não há splitter de atendimento aqui">⑂ → ${esc(derivFed.get(c.id).nome)}</span>`
+          : `<select onchange="updBox(${c.id},'sp2',this.value)">${splitterOptions(c.sp2,true)}</select>`}</td>
+        <td class="num ${st||''}">${derivFed.has(c.id)?'<span class="hint">ramal</span>':fmt(r.cliente)}</td>
         <td>${st?`<span class="pill ${st}">${st==='ok'?'OK':st==='warn'?'Atenção':'Crítico'}</span>`
           :(r.chegada===null||r.chegada===undefined?`<span class="pill bad" title="Não há perna de passagem alimentando esta caixa — a anterior encerra a cascata (splitter balanceado ou '-'), ou a origem do ramal está sem potência">Sem sinal</span>`:'')}</td>
         <td>${pos!==null?`<div class="gauge" style="--p-warn:${pWarn}%;--p-bad:${pBad}%" title="${fmt(r.cliente)} dBm">
@@ -613,7 +634,7 @@ function render(){
           <select onchange="setOrigem(${b.id},this.value)">${origemOptions(b)}</select>
           <span class="feed">${feed!==null&&!isNaN(feed)?fmt(feed)+' dBm':'—'}</span>
         </span>
-        ${err?`<span class="err">⚠ ${err}</span>`:''}
+        ${err?`<span class="err">⚠ ${err}</span>`:(branchWarn.get(b.id)?`<span class="err" style="color:var(--warn)">⚠ ${branchWarn.get(b.id)}</span>`:'')}
         <div class="spacer"></div>
         <button onclick="optimizeBranch(${b.id})" title="Aplica em cascata o melhor splitter desbalanceado de cada caixa para o limite de atenção" style="color:var(--accent)">⚡ Sugerir splitters</button>
         <button onclick="addBox(${b.id})">+ Caixa</button>
@@ -778,10 +799,12 @@ window.setOrigem = (bid,val)=>{
 window.optimizeBranch = bid=>{
   const b=branches.find(x=>x.id===bid); if(!b)return;
   const p=params();
+  const {derivFed}=computeAll();
   // percorre em cascata: a escolha de cada caixa muda a chegada das seguintes,
   // por isso recalcula a rede a cada passo (da primeira para a última)
   for(const c of b.ctos){
     if(isEnd(c.sp1)) continue; // caixa final (balanceado ou '-') não recebe sugestão
+    if(derivFed.has(c.id)) continue; // derivação alimenta ramal: escolha manual
     const {boxRes}=computeAll();
     const r=boxRes.get(c.id);
     const sug=suggestSp1(r?r.chegada:null, c.sp2, p);
@@ -851,7 +874,7 @@ $('fileInput').onchange = e=>{
   r.readAsText(f);
 };
 $('btnExportCsv').onclick = ()=>{
-  const p=params(); const {boxRes}=computeAll(); const sep=';';
+  const p=params(); const {boxRes, derivFed}=computeAll(); const sep=';';
   const head=['Ramal','Origem','#','Caixa','Trecho (km)','Acum. OLT (km)','Chegada (dBm)','Splitter 1','Passagem (dBm)','Derivação (dBm)','Splitter 2','Cliente (dBm)','Status'].join(sep);
   const n=v=>fmt(v).replace('.',',');
   const rows=[];
@@ -861,7 +884,7 @@ $('btnExportCsv').onclick = ()=>{
     b.ctos.forEach((c,i)=>{
       const r=boxRes.get(c.id)||{}; const st=statusOf(r.cliente,p);
       rows.push([b.nome,origemTxt,i+1,c.nome,String(c.dist).replace('.',','),n(r.cum),n(r.chegada),c.sp1,
-        isEnd(c.sp1)?'fim':n(r.passagem),n(r.derivacao),c.sp2,n(r.cliente),
+        isEnd(c.sp1)?'fim':n(r.passagem),n(r.derivacao),derivFed.has(c.id)?'-> ramal':c.sp2,derivFed.has(c.id)?'-> ramal':n(r.cliente),
         st==='ok'?'OK':st==='warn'?'Atenção':st==='bad'?'Crítico':'—'].join(sep));
     });
   }
@@ -875,7 +898,7 @@ function download(name,content,type){
 
 /* ===== relatório PDF (abre janela de impressão — salvar como PDF) ===== */
 $('btnExportPdf').onclick = ()=>{
-  const p=params(); const {boxRes}=computeAll();
+  const p=params(); const {boxRes, derivFed}=computeAll();
   const {svg}=buildDiagramSVG(true, 1380); // quebra automática para caber na página
   const n=v=>fmt(v);
   const stTxt={ok:'OK',warn:'Atenção',bad:'Crítico'};
@@ -895,8 +918,8 @@ $('btnExportPdf').onclick = ()=>{
         <td>${c.sp1}${isEnd(c.sp1)?' (fim)':''}</td>
         <td class="r">${isEnd(c.sp1)?'—':n(r.passagem)}</td>
         <td class="r">${n(r.derivacao)}</td>
-        <td>${c.sp2}</td>
-        <td class="r"><b>${n(r.cliente)}</b></td>
+        <td>${derivFed.has(c.id)?'→ ramal':c.sp2}</td>
+        <td class="r"><b>${derivFed.has(c.id)?'→ ramal':n(r.cliente)}</b></td>
         <td style="color:${noSig?'#c43040':st?stCol[st]:'#666'};font-weight:600">${noSig?'Sem sinal':st?stTxt[st]:'—'}</td>
       </tr>`;
     }).join('');
