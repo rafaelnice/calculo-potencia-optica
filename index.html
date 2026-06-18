@@ -355,9 +355,13 @@ function computeAll(){
   const branchWarn = new Map();  // branchId -> string (avisos não-bloqueantes)
   // caixas cuja derivação alimenta um ramal: a perna está ocupada,
   // logo não há splitter de atendimento nem cliente nelas
-  const derivFed = new Map();    // boxId -> branch
+  const derivFed = new Map();      // boxId -> branch (primeiro ramal que usa a derivação)
+  const derivConflict = new Set(); // boxIds com mais de um ramal na mesma derivação
   for(const b of branches){
-    if(b.origem.tipo==='box' && b.origem.porta==='derivacao') derivFed.set(b.origem.boxId, b);
+    if(b.origem.tipo==='box' && b.origem.porta==='derivacao'){
+      if(derivFed.has(b.origem.boxId)) derivConflict.add(b.origem.boxId);
+      else derivFed.set(b.origem.boxId, b);
+    }
   }
 
   function computeBranch(b){
@@ -395,6 +399,11 @@ function computeAll(){
           if(idx>=0 && idx<found.branch.ctos.length-1 && !isEnd(found.cto.sp1))
             branchWarn.set(b.id,'Conflito: a passagem de '+found.cto.nome+' também alimenta a próxima caixa de "'+found.branch.nome+'" — a mesma perna não pode ir para dois lugares');
         }
+        // conflito físico: a derivação desta caixa já alimenta outro ramal
+        if(b.origem.porta==='derivacao' && derivConflict.has(b.origem.boxId)){
+          branchErr.set(b.id,'Conflito: a derivação de "'+found.cto.nome+'" já alimenta o ramal "'+derivFed.get(b.origem.boxId).nome+'" — a mesma perna não pode ir para dois lugares');
+          originPower = null;
+        }
       }
     }
 
@@ -425,7 +434,7 @@ function computeAll(){
   }
 
   branches.forEach(computeBranch);
-  return {boxRes, branchErr, branchWarn, derivFed, originPowerOf};
+  return {boxRes, branchErr, branchWarn, derivFed, derivConflict, originPowerOf};
 
   function originPowerOf(b){
     if(b.origem.tipo==='olt') return p.olt;
@@ -441,7 +450,7 @@ function computeAll(){
    quando ultrapassa essa largura, com uma serpentina de continuação. */
 function buildDiagramSVG(light, maxW){
   const p = params();
-  const {boxRes, derivFed} = computeAll();
+  const {boxRes, derivFed, derivConflict} = computeAll();
   const C = light
     ? {box:'#ffffff',stroke:'#9aa7b8',line:'#6b7a8e',text:'#16202e',muted:'#5a6878',
        accent:'#a8690d',ok:'#178a55',warn:'#9c7400',bad:'#c43040',branch:'#1d6fc4',oltFill:'#fff7e8'}
@@ -534,7 +543,7 @@ function buildDiagramSVG(light, maxW){
       parts.push(`<text x="${x+10}" y="${by+19}" font-size="12.5" font-weight="700" fill="${C.text}">${esc(c.nome)}</text>`);
       parts.push(`<text x="${x+10}" y="${by+37}" font-size="10.5" font-family="monospace" fill="${C.muted}">S1 ${c.sp1}${isEnd(c.sp1)?' (fim)':''} · S2 ${derivFed.has(c.id)?'→ ramal':c.sp2}</text>`);
       parts.push(`<text x="${x+10}" y="${by+55}" font-size="10.5" font-family="monospace" fill="${C.muted}">Chegada ${fmt(r.chegada)} · Σ ${r.cum!==null&&r.cum!==undefined?fmt(r.cum)+' km':'—'}</text>`);
-      parts.push(`<text x="${x+10}" y="${by+76}" font-size="12" font-weight="700" font-family="monospace" fill="${noSig?C.bad:(derivFed.has(c.id)?C.branch:strokeC)}">${noSig?'SEM SINAL':(derivFed.has(c.id)?'Derivação → ramal':'Cliente '+fmt(r.cliente)+' dBm')}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+76}" font-size="12" font-weight="700" font-family="monospace" fill="${noSig?C.bad:(derivConflict.has(c.id)?C.bad:derivFed.has(c.id)?C.branch:strokeC)}">${noSig?'SEM SINAL':(derivConflict.has(c.id)?'CONFLITO DERIVAÇÃO':derivFed.has(c.id)?'Derivação → ramal':'Cliente '+fmt(r.cliente)+' dBm')}</text>`);
       pos.set(c.id,{x,y:by});
       maxX=Math.max(maxX,x+BW);
     });
@@ -571,7 +580,7 @@ function origemOptions(b){
 
 function render(){
   const p = params();
-  const {boxRes, branchErr, branchWarn, derivFed, originPowerOf} = computeAll();
+  const {boxRes, branchErr, branchWarn, derivFed, derivConflict, originPowerOf} = computeAll();
   const pWarn = ((p.limWarn-GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100);
   const pBad  = ((p.limBad -GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100);
 
@@ -603,10 +612,12 @@ function render(){
         <td><select onchange="updBox(${c.id},'sp1',this.value)">${splitterOptions(c.sp1,false)}</select>${sugHtml}</td>
         <td class="num">${isEnd(c.sp1)?'<span class="hint">fim</span>':fmt(r.passagem)+(pctOf(c.sp1,'passagem')?` <span class="hint">${pctOf(c.sp1,'passagem')}</span>`:'')}</td>
         <td class="num">${fmt(r.derivacao)}${pctOf(c.sp1,'derivacao')?` <span class="hint">${pctOf(c.sp1,'derivacao')}</span>`:''}</td>
-        <td>${derivFed.has(c.id)
-          ? `<span class="hint" title="A perna de derivação desta caixa alimenta o ramal \"${esc(derivFed.get(c.id).nome)}\" — não há splitter de atendimento aqui">⑂ → ${esc(derivFed.get(c.id).nome)}</span>`
-          : `<select onchange="updBox(${c.id},'sp2',this.value)">${splitterOptions(c.sp2,true)}</select>`}</td>
-        <td class="num ${st||''}">${derivFed.has(c.id)?'<span class="hint">ramal</span>':fmt(r.cliente)}</td>
+        <td>${derivConflict.has(c.id)
+          ? `<span class="err" title="Mais de um ramal usa a derivação desta caixa — conflito físico">⚠ conflito</span>`
+          : derivFed.has(c.id)
+            ? `<span class="hint" title="A perna de derivação desta caixa alimenta o ramal \"${esc(derivFed.get(c.id).nome)}\" — não há splitter de atendimento aqui">⑂ → ${esc(derivFed.get(c.id).nome)}</span>`
+            : `<select onchange="updBox(${c.id},'sp2',this.value)">${splitterOptions(c.sp2,true)}</select>`}</td>
+        <td class="num ${st||''}">${derivConflict.has(c.id)?'<span class="err">conflito</span>':derivFed.has(c.id)?'<span class="hint">ramal</span>':fmt(r.cliente)}</td>
         <td>${st?`<span class="pill ${st}">${st==='ok'?'OK':st==='warn'?'Atenção':'Crítico'}</span>`
           :(r.chegada===null||r.chegada===undefined?`<span class="pill bad" title="Não há perna de passagem alimentando esta caixa — a anterior encerra a cascata (splitter balanceado ou '-'), ou a origem do ramal está sem potência">Sem sinal</span>`:'')}</td>
         <td>${pos!==null?`<div class="gauge" style="--p-warn:${pWarn}%;--p-bad:${pBad}%" title="${fmt(r.cliente)} dBm">
@@ -775,7 +786,12 @@ function renderLosses(){
 /* ===== ações ===== */
 window.updLoss = (idx,k,v)=>{ losses[idx][k]=parseFloat(v)||0; render(); };
 window.updBox = (id,k,v)=>{ const f=findBox(id); if(f){f.cto[k]=v; render();} };
-window.delBox = id=>{ const f=findBox(id); if(f){f.branch.ctos=f.branch.ctos.filter(c=>c.id!==id); render();} };
+window.delBox = id=>{
+  const f=findBox(id); if(!f)return;
+  f.branch.ctos=f.branch.ctos.filter(c=>c.id!==id);
+  for(const b of branches){ if(b.origem.tipo==='box'&&b.origem.boxId===id) b.origem={tipo:'olt'}; }
+  render();
+};
 window.dupBox = id=>{ const f=findBox(id); if(!f)return;
   const i=f.branch.ctos.indexOf(f.cto);
   f.branch.ctos.splice(i+1,0,{...f.cto,id:nextBoxId++,nome:f.cto.nome+' (cópia)'}); render(); };
@@ -816,11 +832,18 @@ window.optimizeBranch = bid=>{
 window.delBranch = bid=>{
   const b=branches.find(x=>x.id===bid);
   if(b && confirm(`Excluir o ramal "${b.nome}" e suas caixas?`)){
-    branches=branches.filter(x=>x.id!==bid); render();
+    const boxIds=new Set(b.ctos.map(c=>c.id));
+    branches=branches.filter(x=>x.id!==bid);
+    for(const br of branches){ if(br.origem.tipo==='box'&&boxIds.has(br.origem.boxId)) br.origem={tipo:'olt'}; }
+    render();
   }
 };
 window.branchFrom = boxId=>{
   const f=findBox(boxId); if(!f)return;
+  if(branches.some(b=>b.origem.tipo==='box'&&b.origem.boxId===boxId&&b.origem.porta==='derivacao')){
+    alert('Já existe um ramal alimentado pela derivação de "'+f.cto.nome+'" — a mesma perna não pode ir para dois lugares.');
+    return;
+  }
   branches.push({id:nextBranchId++, nome:`Ramal de ${f.cto.nome}`,
     origem:{tipo:'box',boxId,porta:'derivacao'}, ctos:[]});
   render();
