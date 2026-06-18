@@ -785,7 +785,8 @@ window.moveBox = (id,dir)=>{ const f=findBox(id); if(!f)return;
 window.addBox = bid=>{
   const b=branches.find(x=>x.id===bid); if(!b)return;
   const dist = (!b.ctos.length && b.origem.tipo==='olt') ? 1 : 0.2;
-  b.ctos.push({id:nextBoxId++, nome:`CTO-${String(nextBoxId).padStart(2,'0')}`,
+  const id = nextBoxId++;
+  b.ctos.push({id, nome:`CTO-${String(id).padStart(2,'0')}`,
     dist:dist.toFixed(2), sp1:'10/90', sp2:'1:8'});
   render();
 };
