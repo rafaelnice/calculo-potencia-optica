@@ -86,6 +86,8 @@
   td input.dist{min-width:74px;text-align:right}
   .num{font-family:var(--mono);text-align:right;font-size:13px}
   .num.ok{color:var(--ok)} .num.warn{color:var(--warn)} .num.bad{color:var(--bad);font-weight:700}
+  select.tipo-sel{width:auto;padding:3px 5px;font-size:11px;font-weight:700;letter-spacing:.3px}
+  tr.ceo-row td{background:rgba(95,168,255,.04)}
   .pill{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.6px;border-radius:4px;
     padding:2px 7px;text-transform:uppercase}
   .pill.ok{background:rgba(58,208,138,.12);color:var(--ok)}
@@ -423,8 +425,8 @@ function computeAll(){
         const s1 = lossOf(c.sp1);
         derivacao = chegada - s1.p1;
         passagem  = isEnd(c.sp1) ? null : chegada - s1.p2; // sem P2 quando encerra
-        // se a derivação alimenta um ramal, a perna está ocupada: não há cliente local
-        cliente   = derivFed.has(c.id) ? null
+        // CEO não tem atendimento local; derivFed também ocupa a perna de derivação
+        cliente   = (c.tipo==='ceo' || derivFed.has(c.id)) ? null
                   : (c.sp2==='-') ? derivacao : derivacao - lossOf(c.sp2).p1;
       }
       boxRes.set(c.id,{chegada,derivacao,passagem,cliente,cum});
@@ -536,15 +538,16 @@ function buildDiagramSVG(light, maxW){
       }
       const by=laneY+rowIdx*LANE;
       const r=boxRes.get(c.id)||{};
+      const isCeo = c.tipo==='ceo';
       const st=statusOf(r.cliente,p);
       const noSig = r.chegada===null||r.chegada===undefined;
-      const strokeC = noSig?C.muted : st==='bad'?C.bad : st==='warn'?C.warn : st==='ok'?C.ok : C.stroke;
+      const strokeC = noSig?C.muted : isCeo?C.branch : st==='bad'?C.bad : st==='warn'?C.warn : st==='ok'?C.ok : C.stroke;
 
       parts.push(`<rect x="${x}" y="${by}" width="${BW}" height="${BH}" rx="8" fill="${C.box}" stroke="${strokeC}" stroke-width="1.6" ${noSig?'stroke-dasharray="5 4"':''}/>`);
       parts.push(`<text x="${x+10}" y="${by+19}" font-size="12.5" font-weight="700" fill="${C.text}">${esc(c.nome)}</text>`);
-      parts.push(`<text x="${x+10}" y="${by+37}" font-size="10.5" font-family="monospace" fill="${C.muted}">S1 ${c.sp1}${isEnd(c.sp1)?' (fim)':''} · S2 ${derivFed.has(c.id)?'→ ramal':c.sp2}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+37}" font-size="10.5" font-family="monospace" fill="${C.muted}">S1 ${c.sp1}${isEnd(c.sp1)?' (fim)':''} · ${isCeo?'CEO':('S2 '+(derivFed.has(c.id)?'→ ramal':c.sp2))}</text>`);
       parts.push(`<text x="${x+10}" y="${by+55}" font-size="10.5" font-family="monospace" fill="${C.muted}">Chegada ${fmt(r.chegada)} · Σ ${r.cum!==null&&r.cum!==undefined?fmt(r.cum)+' km':'—'}</text>`);
-      parts.push(`<text x="${x+10}" y="${by+76}" font-size="12" font-weight="700" font-family="monospace" fill="${noSig?C.bad:(derivConflict.has(c.id)?C.bad:derivFed.has(c.id)?C.branch:strokeC)}">${noSig?'SEM SINAL':(derivConflict.has(c.id)?'CONFLITO DERIVAÇÃO':derivFed.has(c.id)?'Derivação → ramal':'Cliente '+fmt(r.cliente)+' dBm')}</text>`);
+      parts.push(`<text x="${x+10}" y="${by+76}" font-size="12" font-weight="700" font-family="monospace" fill="${noSig?C.bad:(derivConflict.has(c.id)?C.bad:isCeo?C.branch:derivFed.has(c.id)?C.branch:strokeC)}">${noSig?'SEM SINAL':(derivConflict.has(c.id)?'CONFLITO DERIVAÇÃO':isCeo?'CEO — sem atendimento':derivFed.has(c.id)?'Derivação → ramal':'Cliente '+fmt(r.cliente)+' dBm')}</text>`);
       pos.set(c.id,{x,y:by});
       maxX=Math.max(maxX,x+BW);
     });
@@ -595,7 +598,7 @@ function render(){
       const st = statusOf(r.cliente,p);
       const pos = r.cliente!==null&&!isNaN(r.cliente)?Math.max(0,Math.min(100,(r.cliente-GAUGE_MIN)/(GAUGE_MAX-GAUGE_MIN)*100)):null;
       const deltaTxt = (r.cum!==null&&r.cum!==undefined)?` <span class="hint" title="Distância acumulada até a OLT">Σ ${fmt(r.cum)}</span>`:'';
-      const sug = (!isEnd(c.sp1) && !derivFed.has(c.id)) ? suggestSp1(r.chegada, c.sp2, p) : null;
+      const sug = (!isEnd(c.sp1) && !derivFed.has(c.id) && c.tipo!=='ceo') ? suggestSp1(r.chegada, c.sp2, p) : null;
       let sugHtml = '';
       if(sug){
         if(sug.tipo===c.sp1){
@@ -605,20 +608,28 @@ function render(){
             title="${sug.insuf?'Nem o 50/50 atinge o limite de atenção neste ponto':'Aplicar sugestão'} — cliente ficaria em ${fmt(sug.cliente)} dBm">⚡ ${sug.tipo} → ${fmt(sug.cliente)}</div>`;
         }
       }
-      return `<tr>
+      return `<tr${c.tipo==='ceo'?' class="ceo-row"':''}>
         <td class="hint">${i+1}</td>
-        <td><input class="nome" type="text" value="${esc(c.nome)}" onchange="updBox(${c.id},'nome',this.value)"></td>
+        <td><div style="display:flex;gap:4px;align-items:center">
+          <select class="tipo-sel" title="Tipo da caixa" onchange="updBox(${c.id},'tipo',this.value)">
+            <option value="cto" ${(c.tipo||'cto')==='cto'?'selected':''}>CTO</option>
+            <option value="ceo" ${(c.tipo||'cto')==='ceo'?'selected':''}>CEO</option>
+          </select>
+          <input class="nome" type="text" value="${esc(c.nome)}" onchange="updBox(${c.id},'nome',this.value)">
+        </div></td>
         <td><input class="dist" type="number" step="0.01" value="${esc(c.dist)}" onchange="updBox(${c.id},'dist',this.value)">${deltaTxt}</td>
         <td class="num">${fmt(r.chegada)}</td>
         <td><select onchange="updBox(${c.id},'sp1',this.value)">${splitterOptions(c.sp1,false)}</select>${sugHtml}</td>
         <td class="num">${isEnd(c.sp1)?'<span class="hint">fim</span>':fmt(r.passagem)+(pctOf(c.sp1,'passagem')?` <span class="hint">${pctOf(c.sp1,'passagem')}</span>`:'')}</td>
         <td class="num">${fmt(r.derivacao)}${pctOf(c.sp1,'derivacao')?` <span class="hint">${pctOf(c.sp1,'derivacao')}</span>`:''}</td>
-        <td>${derivConflict.has(c.id)
-          ? `<span class="err" title="Mais de um ramal usa a derivação desta caixa — conflito físico">⚠ conflito</span>`
-          : derivFed.has(c.id)
-            ? `<span class="hint" title="A perna de derivação desta caixa alimenta o ramal \"${esc(derivFed.get(c.id).nome)}\" — não há splitter de atendimento aqui">⑂ → ${esc(derivFed.get(c.id).nome)}</span>`
-            : `<select onchange="updBox(${c.id},'sp2',this.value)">${splitterOptions(c.sp2,true)}</select>`}</td>
-        <td class="num ${st||''}">${derivConflict.has(c.id)?'<span class="err">conflito</span>':derivFed.has(c.id)?'<span class="hint">ramal</span>':fmt(r.cliente)}</td>
+        <td>${c.tipo==='ceo'
+          ? `<span class="hint" title="CEO não possui splitter de atendimento">—</span>`
+          : derivConflict.has(c.id)
+            ? `<span class="err" title="Mais de um ramal usa a derivação desta caixa — conflito físico">⚠ conflito</span>`
+            : derivFed.has(c.id)
+              ? `<span class="hint" title="A perna de derivação desta caixa alimenta o ramal \"${esc(derivFed.get(c.id).nome)}\" — não há splitter de atendimento aqui">⑂ → ${esc(derivFed.get(c.id).nome)}</span>`
+              : `<select onchange="updBox(${c.id},'sp2',this.value)">${splitterOptions(c.sp2,true)}</select>`}</td>
+        <td class="num ${st||''}">${c.tipo==='ceo'?'<span class="hint">—</span>':derivConflict.has(c.id)?'<span class="err">conflito</span>':derivFed.has(c.id)?'<span class="hint">ramal</span>':fmt(r.cliente)}</td>
         <td>${st?`<span class="pill ${st}">${st==='ok'?'OK':st==='warn'?'Atenção':'Crítico'}</span>`
           :(r.chegada===null||r.chegada===undefined?`<span class="pill bad" title="Não há perna de passagem alimentando esta caixa — a anterior encerra a cascata (splitter balanceado ou '-'), ou a origem do ramal está sem potência">Sem sinal</span>`:'')}</td>
         <td>${pos!==null?`<div class="gauge" style="--p-warn:${pWarn}%;--p-bad:${pBad}%" title="${fmt(r.cliente)} dBm">
@@ -804,7 +815,7 @@ window.addBox = bid=>{
   const dist = (!b.ctos.length && b.origem.tipo==='olt') ? 1 : 0.2;
   const id = nextBoxId++;
   b.ctos.push({id, nome:`CTO-${String(id).padStart(2,'0')}`,
-    dist:dist.toFixed(2), sp1:'10/90', sp2:'1:8'});
+    dist:dist.toFixed(2), sp1:'10/90', sp2:'1:8', tipo:'cto'});
   render();
 };
 window.updBranch = (bid,k,v)=>{ const b=branches.find(x=>x.id===bid); if(b){b[k]=v; render();} };
@@ -824,6 +835,7 @@ window.optimizeBranch = bid=>{
   for(const c of b.ctos){
     if(isEnd(c.sp1)) continue; // caixa final (balanceado ou '-') não recebe sugestão
     if(derivFed.has(c.id)) continue; // derivação alimenta ramal: escolha manual
+    if(c.tipo==='ceo') continue; // CEO sem atendimento local: otimização não se aplica
     const {boxRes}=computeAll();
     const r=boxRes.get(c.id);
     const sug=suggestSp1(r?r.chegada:null, c.sp2, p);
@@ -903,7 +915,7 @@ $('fileInput').onchange = e=>{
 };
 $('btnExportCsv').onclick = ()=>{
   const p=params(); const {boxRes, derivFed}=computeAll(); const sep=';';
-  const head=['Ramal','Origem','#','Caixa','Trecho (km)','Acum. OLT (km)','Chegada (dBm)','Splitter 1','Passagem (dBm)','Derivação (dBm)','Splitter 2','Cliente (dBm)','Status'].join(sep);
+  const head=['Ramal','Origem','#','Tipo','Caixa','Trecho (km)','Acum. OLT (km)','Chegada (dBm)','Splitter 1','Passagem (dBm)','Derivação (dBm)','Splitter 2','Cliente (dBm)','Status'].join(sep);
   const n=v=>fmt(v).replace('.',',');
   const rows=[];
   for(const b of branches){
@@ -911,9 +923,10 @@ $('btnExportCsv').onclick = ()=>{
       : (()=>{const f=findBox(b.origem.boxId);return f?`${f.cto.nome} (${PORT_LABEL[b.origem.porta]})`:'?';})();
     b.ctos.forEach((c,i)=>{
       const r=boxRes.get(c.id)||{}; const st=statusOf(r.cliente,p);
-      rows.push([b.nome,origemTxt,i+1,c.nome,String(c.dist).replace('.',','),n(r.cum),n(r.chegada),c.sp1,
-        isEnd(c.sp1)?'fim':n(r.passagem),n(r.derivacao),derivFed.has(c.id)?'-> ramal':c.sp2,derivFed.has(c.id)?'-> ramal':n(r.cliente),
-        st==='ok'?'OK':st==='warn'?'Atenção':st==='bad'?'Crítico':'—'].join(sep));
+      const isCeo=c.tipo==='ceo';
+      rows.push([b.nome,origemTxt,i+1,(c.tipo||'cto').toUpperCase(),c.nome,String(c.dist).replace('.',','),n(r.cum),n(r.chegada),c.sp1,
+        isEnd(c.sp1)?'fim':n(r.passagem),n(r.derivacao),isCeo?'CEO':derivFed.has(c.id)?'-> ramal':c.sp2,isCeo?'—':derivFed.has(c.id)?'-> ramal':n(r.cliente),
+        isCeo?'CEO':st==='ok'?'OK':st==='warn'?'Atenção':st==='bad'?'Crítico':'—'].join(sep));
     });
   }
   download(($('pNome').value||'projeto')+'.csv','\uFEFF'+[head,...rows].join('\n'),'text/csv');
@@ -938,24 +951,25 @@ $('btnExportPdf').onclick = ()=>{
     const rows = b.ctos.map((c,i)=>{
       const r=boxRes.get(c.id)||{}; const st=statusOf(r.cliente,p);
       const noSig=r.chegada===null||r.chegada===undefined;
+      const isCeo=c.tipo==='ceo';
       return `<tr>
-        <td>${i+1}</td><td>${esc(c.nome)}</td>
+        <td>${i+1}</td><td><b>${isCeo?'CEO':'CTO'}</b></td><td>${esc(c.nome)}</td>
         <td class="r">${String(c.dist).replace('.',',')}</td>
         <td class="r">${r.cum!==null&&r.cum!==undefined?n(r.cum).replace('.',','):'—'}</td>
         <td class="r">${n(r.chegada)}</td>
         <td>${c.sp1}${isEnd(c.sp1)?' (fim)':''}</td>
         <td class="r">${isEnd(c.sp1)?'—':n(r.passagem)}</td>
         <td class="r">${n(r.derivacao)}</td>
-        <td>${derivFed.has(c.id)?'→ ramal':c.sp2}</td>
-        <td class="r"><b>${derivFed.has(c.id)?'→ ramal':n(r.cliente)}</b></td>
-        <td style="color:${noSig?'#c43040':st?stCol[st]:'#666'};font-weight:600">${noSig?'Sem sinal':st?stTxt[st]:'—'}</td>
+        <td>${isCeo?'—':derivFed.has(c.id)?'→ ramal':c.sp2}</td>
+        <td class="r"><b>${isCeo?'—':derivFed.has(c.id)?'→ ramal':n(r.cliente)}</b></td>
+        <td style="color:${noSig?'#c43040':isCeo?'#1d6fc4':st?stCol[st]:'#666'};font-weight:600">${noSig?'Sem sinal':isCeo?'CEO':st?stTxt[st]:'—'}</td>
       </tr>`;
     }).join('');
     return `<h3>${esc(b.nome)} <span class="org">· alimentado por ${origemTxt}</span></h3>
       <table><thead><tr>
-        <th>#</th><th>Caixa</th><th>Trecho (km)</th><th>Σ OLT (km)</th><th>Chegada (dBm)</th>
+        <th>#</th><th>Tipo</th><th>Caixa</th><th>Trecho (km)</th><th>Σ OLT (km)</th><th>Chegada (dBm)</th>
         <th>Splitter 1</th><th>Passagem (dBm)</th><th>Derivação (dBm)</th><th>Splitter 2</th><th>Cliente (dBm)</th><th>Status</th>
-      </tr></thead><tbody>${rows||'<tr><td colspan="11">Ramal vazio</td></tr>'}</tbody></table>`;
+      </tr></thead><tbody>${rows||'<tr><td colspan="12">Ramal vazio</td></tr>'}</tbody></table>`;
   }).join('');
 
   const dt = new Date().toLocaleString('pt-BR');
