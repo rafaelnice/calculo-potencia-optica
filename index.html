@@ -306,14 +306,15 @@ const fmt = v => (v===null||v===undefined||isNaN(v)) ? '—' : v.toFixed(2);
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 function lossOf(tipo){ return losses.find(l=>l.tipo===tipo) || {p1:0,p2:0}; }
 function params(){
+  const lw = parseFloat($('limWarn').value), lb = parseFloat($('limBad').value);
   return {
     nome: $('pNome').value,
     olt: parseFloat($('pOlt').value)||0,
     inicial: parseFloat($('pInicial').value)||0,
     km: parseFloat($('pKm').value)||0,
     trecho: parseFloat($('pTrecho').value)||0,
-    limWarn: parseFloat($('limWarn').value),
-    limBad: parseFloat($('limBad').value)
+    limWarn: isNaN(lw) ? -25 : lw,
+    limBad:  isNaN(lb) ? -28 : lb
   };
 }
 function statusOf(v,p){
@@ -817,6 +818,7 @@ window.optimizeBranch = bid=>{
   const b=branches.find(x=>x.id===bid); if(!b)return;
   const p=params();
   const {derivFed}=computeAll();
+  const insuf=[];
   // percorre em cascata: a escolha de cada caixa muda a chegada das seguintes,
   // por isso recalcula a rede a cada passo (da primeira para a última)
   for(const c of b.ctos){
@@ -825,9 +827,11 @@ window.optimizeBranch = bid=>{
     const {boxRes}=computeAll();
     const r=boxRes.get(c.id);
     const sug=suggestSp1(r?r.chegada:null, c.sp2, p);
-    if(sug) c.sp1=sug.tipo;
+    if(sug){ c.sp1=sug.tipo; if(sug.insuf) insuf.push(c.nome); }
   }
   render();
+  if(insuf.length)
+    alert('Atenção: nenhum splitter consegue atingir o limite de atenção em:\n'+insuf.join('\n')+'\n\nO splitter de menor perda foi aplicado nesses pontos.');
 };
 window.delBranch = bid=>{
   const b=branches.find(x=>x.id===bid);
